@@ -1,40 +1,47 @@
 import java.util.*;
+import java.util.concurrent.*;
 
 // Reservation class
 class Reservation {
     private String reservationId;
     private String roomType;
-    private String roomId;
-    private boolean isActive;
 
-    public Reservation(String reservationId, String roomType, String roomId) {
+    public Reservation(String reservationId, String roomType) {
         this.reservationId = reservationId;
         this.roomType = roomType;
-        this.roomId = roomId;
-        this.isActive = true;
     }
 
-    public String getReservationId() { return reservationId; }
-    public String getRoomType() { return roomType; }
-    public String getRoomId() { return roomId; }
-    public boolean isActive() { return isActive; }
-    public void cancel() { isActive = false; }
+    public String getReservationId() {
+        return reservationId;
+    }
+
+    public String getRoomType() {
+        return roomType;
+    }
 }
 
-// Inventory class
+// Thread-safe inventory
 class RoomInventory {
     private Map<String, Integer> inventory = new HashMap<>();
 
     public RoomInventory() {
-        inventory.put("Standard", 2);
-        inventory.put("Deluxe", 1);
+        inventory.put("Standard", 5);
+        inventory.put("Deluxe", 3);
+        inventory.put("Suite", 2);
     }
 
-    public void increment(String roomType) {
-        inventory.put(roomType, inventory.getOrDefault(roomType, 0) + 1);
+    // synchronized method to ensure thread-safe booking
+    public synchronized boolean bookRoom(String roomType) {
+        int available = inventory.getOrDefault(roomType, 0);
+        if (available > 0) {
+            inventory.put(roomType, available - 1);
+            return true;
+        } else {
+            return false;
+        }
     }
 
-    public void displayInventory() {
+    public synchronized void displayInventory() {
         System.out.println("\nCurrent Inventory:");
         for (String type : inventory.keySet()) {
             System.out.println(type + ": " + inventory.get(type));
@@ -42,61 +49,68 @@ class RoomInventory {
     }
 }
 
-// Cancellation Service
-class CancellationService {
-    private Map<String, Reservation> reservations;
-    private Stack<String> rollbackStack;
+// Booking processor thread
+class BookingProcessor implements Runnable {
+    private String guestName;
+    private String roomType;
     private RoomInventory inventory;
+    private List<Reservation> confirmedBookings;
 
-    public CancellationService(Map<String, Reservation> reservations, RoomInventory inventory) {
-        this.reservations = reservations;
+    public BookingProcessor(String guestName, String roomType,
+                            RoomInventory inventory, List<Reservation> confirmedBookings) {
+        this.guestName = guestName;
+        this.roomType = roomType;
         this.inventory = inventory;
-        this.rollbackStack = new Stack<>();
+        this.confirmedBookings = confirmedBookings;
     }
 
-    public void cancelBooking(String reservationId) {
-        if (!reservations.containsKey(reservationId)) {
-            System.out.println("Error: Reservation not found.");
-            return;
+    @Override
+    public void run() {
+        boolean success = inventory.bookRoom(roomType);
+        if (success) {
+            synchronized (confirmedBookings) { // thread-safe addition
+                confirmedBookings.add(new Reservation(guestName, roomType));
+            }
+            System.out.println(guestName + " booked " + roomType + " successfully.");
+        } else {
+            System.out.println(guestName + " failed to book " + roomType + " (no availability).");
         }
-
-        Reservation res = reservations.get(reservationId);
-
-        if (!res.isActive()) {
-            System.out.println("Error: Reservation already cancelled.");
-            return;
-        }
-
-        rollbackStack.push(res.getRoomId());
-        inventory.increment(res.getRoomType());
-        res.cancel();
-
-        System.out.println("Cancellation successful for Reservation ID: " + reservationId);
-    }
-
-    public void displayRollbackStack() {
-        System.out.println("\nRollback Stack (Recent Releases): " + rollbackStack);
     }
 }
 
-// Main class — must match the file name
-public class UseCase10 Booking git checkout  {
+// Main class
+public class UseCase11ConcurrentBookingSimulation {
 
-    public static void main(String[] args) {
-        Map<String, Reservation> reservations = new HashMap<>();
-        reservations.put("R101", new Reservation("R101", "Standard", "S1"));
-        reservations.put("R102", new Reservation("R102", "Deluxe", "D1"));
-
+    public static void main(String[] args) throws InterruptedException {
         RoomInventory inventory = new RoomInventory();
-        CancellationService service = new CancellationService(reservations, inventory);
+        List<Reservation> confirmedBookings = Collections.synchronizedList(new ArrayList<>());
 
-        // Test cases
-        service.cancelBooking("R101");   // valid
-        service.cancelBooking("R101");   // already cancelled
-        service.cancelBooking("R999");   // invalid ID
+        // Simulate multiple guest booking requests
+        String[] guests = {"Alice", "Bob", "Charlie", "David", "Eve", "Frank"};
+        String[] roomTypes = {"Standard", "Deluxe", "Suite", "Standard", "Deluxe", "Suite"};
 
-        // Display system state
+        List<Thread> threads = new ArrayList<>();
+
+        // Create and start threads
+        for (int i = 0; i < guests.length; i++) {
+            Thread t = new Thread(new BookingProcessor(guests[i], roomTypes[i], inventory, confirmedBookings));
+            threads.add(t);
+            t.start();
+        }
+
+        // Wait for all threads to complete
+        for (Thread t : threads) {
+            t.join();
+        }
+
+        // Display final system state
         inventory.displayInventory();
-        service.displayRollbackStack();
+
+        System.out.println("\nConfirmed Bookings:");
+        synchronized (confirmedBookings) {
+            for (Reservation r : confirmedBookings) {
+                System.out.println(r.getReservationId() + " -> " + r.getRoomType());
+            }
+        }
     }
 }
